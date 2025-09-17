@@ -6,11 +6,13 @@ const { EndBehaviorType } = require('@discordjs/voice');
 const prism = require('prism-media');
 
 class AudioCaptureSession {
-  constructor({ connection, guildId, baseDir }) {
+  constructor({ connection, guildId, baseDir, resolveLabel }) {
     this.connection = connection;
     this.guildId = guildId;
     this.baseDir = baseDir;
     this.recordings = new Map();
+    this.labels = new Map();
+    this.resolveLabel = resolveLabel ?? (() => null);
     this.cleanups = [];
     this.sessionId = `${Date.now()}`;
     this.sessionDir = path.join(this.baseDir, this.guildId, this.sessionId);
@@ -42,7 +44,8 @@ class AudioCaptureSession {
           rate: 48000,
         });
 
-        const filename = `${Date.now()}.pcm`;
+        const startedAt = Date.now();
+        const filename = `${startedAt}.pcm`;
         const filePath = path.join(userDir, filename);
         const fileStream = fs.createWriteStream(filePath);
 
@@ -53,8 +56,13 @@ class AudioCaptureSession {
         });
 
         const recordings = this.recordings.get(userId) ?? [];
-        recordings.push(filePath);
+        recordings.push({ filePath, startedAt });
         this.recordings.set(userId, recordings);
+
+        if (!this.labels.has(userId)) {
+          const label = this.resolveLabel(userId) ?? userId;
+          this.labels.set(userId, label);
+        }
 
         this.cleanups.push(() => {
           if (!fileStream.closed) {
@@ -76,7 +84,16 @@ class AudioCaptureSession {
       guildId: this.guildId,
       sessionId: this.sessionId,
       directory: this.sessionDir,
-      recordings: Object.fromEntries(this.recordings),
+      recordings: Object.fromEntries(
+        Array.from(this.recordings.entries()).map(([userId, items]) => [
+          userId,
+          items.map((item) => ({
+            filePath: item.filePath,
+            startedAt: item.startedAt,
+          })),
+        ]),
+      ),
+      labels: Object.fromEntries(this.labels),
     };
   }
 
@@ -98,12 +115,17 @@ class AudioCaptureManager {
     this.sessions = new Map();
   }
 
-  async start(connection, guildId) {
+  async start(connection, guildId, options = {}) {
     if (this.sessions.has(guildId)) {
       return this.sessions.get(guildId);
     }
 
-    const session = new AudioCaptureSession({ connection, guildId, baseDir: this.baseDir });
+    const session = new AudioCaptureSession({
+      connection,
+      guildId,
+      baseDir: this.baseDir,
+      resolveLabel: options.resolveLabel,
+    });
     await session.init();
     this.sessions.set(guildId, session);
     return session;

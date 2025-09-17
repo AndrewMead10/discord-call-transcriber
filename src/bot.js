@@ -8,6 +8,32 @@ const {
 const { AudioCaptureManager } = require('./recording/audioCapture');
 const { TranscriptionClient } = require('./transcription/transcriptionClient');
 
+function chunkText(text, maxLength) {
+  const chunks = [];
+  let current = '';
+  for (const line of text.split('\n')) {
+    if ((current + line).length + 1 > maxLength) {
+      if (current) {
+        chunks.push(current);
+        current = '';
+      }
+      if (line.length > maxLength) {
+        let start = 0;
+        while (start < line.length) {
+          chunks.push(line.slice(start, start + maxLength));
+          start += maxLength;
+        }
+        continue;
+      }
+    }
+    current += (current ? '\n' : '') + line;
+  }
+  if (current) {
+    chunks.push(current);
+  }
+  return chunks;
+}
+
 class CallTranscribeBot {
   constructor({ token, recordingRoot, transcriptionConfig }) {
     this.token = token;
@@ -17,6 +43,7 @@ class CallTranscribeBot {
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.GuildVoiceStates,
+        GatewayIntentBits.GuildMembers,
         GatewayIntentBits.MessageContent,
       ],
       partials: [Partials.Channel],
@@ -82,7 +109,17 @@ class CallTranscribeBot {
 
       await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
       this.connections.set(message.guild.id, connection);
-      await this.captureManager.start(connection, message.guild.id);
+
+      const resolveLabel = (userId) => {
+        const member = message.guild.members.cache.get(userId);
+        if (member) {
+          return member.displayName;
+        }
+        const user = this.client.users.cache.get(userId);
+        return user ? user.tag : userId;
+      };
+
+      await this.captureManager.start(connection, message.guild.id, { resolveLabel });
       await message.reply(`Joined ${voiceChannel.name} and started recording. Mention me with "leave" when you want me to stop.`);
 
       connection.on('error', (error) => {
@@ -130,7 +167,16 @@ class CallTranscribeBot {
     const transcriptionResult = await this.transcriptionClient.submit(manifest);
 
     if (transcriptionResult.status === 'sent') {
-      await message.reply('Recording stopped. I sent the audio manifest to the transcription service.');
+      const transcript = transcriptionResult.data?.transcript;
+      if (transcript) {
+        const chunks = chunkText(transcript, 1900);
+        await message.reply('Recording stopped. Here is the transcript:');
+        for (const chunk of chunks) {
+          await message.channel.send(````\n${chunk}\n```);
+        }
+      } else {
+        await message.reply('Recording stopped. Transcription service responded without content.');
+      }
     } else if (transcriptionResult.status === 'skipped') {
       await message.reply('Recording stopped. Configure the transcription endpoint to process the audio.');
     } else if (transcriptionResult.status === 'failed') {
