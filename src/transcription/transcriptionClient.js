@@ -155,6 +155,7 @@ class TranscriptionClient {
             label,
             startedAt: item.startedAt ?? null,
             text: cleaned,
+            audioPath: wavPath,
           });
         } catch (error) {
           const label = labels[userId] ?? userId;

@@ -5,6 +5,7 @@ const {
   VoiceConnectionStatus,
   getVoiceConnection,
 } = require('@discordjs/voice');
+const path = require('path');
 const { AudioCaptureManager } = require('./recording/audioCapture');
 const { TranscriptionClient } = require('./transcription/transcriptionClient');
 
@@ -35,7 +36,7 @@ function chunkText(text, maxLength) {
 }
 
 class CallTranscribeBot {
-  constructor({ token, recordingRoot, transcriptionConfig }) {
+  constructor({ token, recordingRoot, transcriptionConfig, database }) {
     this.token = token;
     this.recordingRoot = recordingRoot;
     this.client = new Client({
@@ -52,6 +53,8 @@ class CallTranscribeBot {
     this.captureManager = new AudioCaptureManager({ baseDir: this.recordingRoot });
     this.transcriptionClient = new TranscriptionClient(transcriptionConfig);
     this.connections = new Map();
+    this.sessionMetadata = new Map();
+    this.database = database ?? null;
 
     this._registerEventHandlers();
   }
@@ -110,6 +113,21 @@ class CallTranscribeBot {
       await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
       this.connections.set(message.guild.id, connection);
 
+      const participants = Array.from(voiceChannel.members.values()).map((member) => ({
+        userId: member.id,
+        displayName: member.displayName ?? member.user?.username ?? member.user?.tag ?? member.id,
+        joinedAt: Date.now(),
+      }));
+
+      this.sessionMetadata.set(message.guild.id, {
+        guildId: message.guild.id,
+        guildName: message.guild.name,
+        channelId: voiceChannel.id,
+        channelName: voiceChannel.name,
+        startedAt: Date.now(),
+        participants,
+      });
+
       const resolveLabel = (userId) => {
         const member = message.guild.members.cache.get(userId);
         if (member) {
@@ -155,6 +173,9 @@ class CallTranscribeBot {
       return;
     }
 
+    const channelId = connection.joinConfig?.channelId ?? null;
+    const metadata = this.sessionMetadata.get(message.guild.id);
+
     connection.destroy();
     this.connections.delete(message.guild.id);
 
@@ -165,6 +186,16 @@ class CallTranscribeBot {
     }
 
     const transcriptionResult = await this.transcriptionClient.submit(manifest);
+
+    await this._persistSession({
+      message,
+      manifest,
+      transcriptionResult,
+      metadata,
+      channelId,
+    });
+
+    this.sessionMetadata.delete(message.guild.id);
 
     if (transcriptionResult.status === 'sent') {
       const transcript = transcriptionResult.data?.transcript;
@@ -181,6 +212,132 @@ class CallTranscribeBot {
       await message.reply('Recording stopped. Configure the transcription endpoint to process the audio.');
     } else if (transcriptionResult.status === 'failed') {
       await message.reply(`Recording stopped, but I could not reach the transcription service: ${transcriptionResult.reason}`);
+    }
+  }
+
+  async _collectParticipants({ message, metadata, channelId, manifest }) {
+    const participantsById = new Map();
+    const sessionId = manifest.sessionId;
+    let resolvedChannelId = metadata?.channelId ?? channelId ?? null;
+    let resolvedChannelName = metadata?.channelName ?? null;
+
+    const addParticipant = (userId, displayName, joinedAt = null) => {
+      if (!userId) {
+        return;
+      }
+      const existing = participantsById.get(userId);
+      if (existing) {
+        if (!existing.displayName && displayName) {
+          existing.displayName = displayName;
+        }
+        if (!existing.joinedAt && joinedAt) {
+          existing.joinedAt = joinedAt;
+        }
+        return;
+      }
+      participantsById.set(userId, {
+        sessionId,
+        userId,
+        displayName: displayName || userId,
+        joinedAt: joinedAt ?? null,
+      });
+    };
+
+    if (metadata?.participants?.length) {
+      for (const participant of metadata.participants) {
+        addParticipant(participant.userId, participant.displayName, participant.joinedAt);
+      }
+    }
+
+    let voiceChannel = null;
+    if (channelId) {
+      voiceChannel = message.guild.channels.cache.get(channelId) ?? null;
+      if (!voiceChannel) {
+        try {
+          voiceChannel = await message.guild.channels.fetch(channelId);
+        } catch (error) {
+          voiceChannel = null;
+        }
+      }
+    }
+
+    if (voiceChannel && voiceChannel.isVoiceBased()) {
+      resolvedChannelId = voiceChannel.id;
+      resolvedChannelName = voiceChannel.name;
+      for (const member of voiceChannel.members.values()) {
+        const displayName = member.displayName ?? member.user?.username ?? member.user?.tag ?? member.id;
+        addParticipant(member.id, displayName, metadata?.startedAt ?? null);
+      }
+    }
+
+    const labels = manifest.labels ?? {};
+    for (const [userId, label] of Object.entries(labels)) {
+      addParticipant(userId, label, metadata?.startedAt ?? null);
+    }
+
+    return {
+      participants: Array.from(participantsById.values()),
+      channelId: resolvedChannelId,
+      channelName: resolvedChannelName,
+    };
+  }
+
+  async _persistSession({ message, manifest, transcriptionResult, metadata, channelId }) {
+    if (!this.database) {
+      return;
+    }
+
+    try {
+      const data = await this._collectParticipants({
+        message,
+        metadata,
+        channelId,
+        manifest,
+      });
+
+      const now = Date.now();
+      const sessionId = manifest.sessionId;
+      const manifestTimestamp = Number.parseInt(sessionId, 10);
+      const sessionStartedAt = metadata?.startedAt
+        ?? (Number.isFinite(manifestTimestamp) ? manifestTimestamp : now);
+      const transcript = transcriptionResult.data?.transcript ?? null;
+      const segmentsFromResult = transcriptionResult.data?.segments ?? [];
+
+      const participants = data.participants.map((participant) => ({
+        ...participant,
+        joinedAt: participant.joinedAt ?? sessionStartedAt,
+      }));
+
+      const segments = segmentsFromResult.map((segment) => ({
+        id: segment.id,
+        sessionId,
+        userId: segment.userId ?? null,
+        label: segment.label ?? null,
+        startedAt: segment.startedAt ?? null,
+        text: segment.text ?? '',
+        audioPath: segment.audioPath
+          ? path.relative(this.recordingRoot, segment.audioPath)
+          : null,
+      }));
+
+      const sessionRecord = {
+        id: sessionId,
+        guildId: metadata?.guildId ?? message.guild.id,
+        guildName: metadata?.guildName ?? message.guild.name,
+        channelId: data.channelId ?? metadata?.channelId ?? channelId ?? null,
+        channelName: data.channelName ?? metadata?.channelName ?? null,
+        startedAt: sessionStartedAt,
+        endedAt: now,
+        transcript,
+      };
+
+      this.database.saveSession({
+        session: sessionRecord,
+        participants,
+        segments,
+      });
+    } catch (error) {
+      console.error('Failed to persist session data:', error);
     }
   }
 }

@@ -7,7 +7,11 @@ WORKDIR /app
 
 # System dependencies for native modules
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 build-essential \
+  && apt-get install -y --no-install-recommends \
+    python3 \
+    build-essential \
+    pkg-config \
+    libsqlite3-dev \
   && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies first to leverage Docker layer caching
@@ -18,7 +22,7 @@ RUN npm install --omit=dev
 COPY . .
 
 # Ensure tmp directory exists for audio capture
-RUN mkdir -p tmp && chown -R node:node /app
+RUN mkdir -p tmp data && chown -R node:node /app
 
 USER node
 

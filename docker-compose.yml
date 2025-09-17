@@ -4,5 +4,10 @@ services:
     container_name: call-transcribe
     restart: unless-stopped
     env_file: .env
+    environment:
+      - PORT=16384
+    ports:
+      - "16384:16384"
     volumes:
       - ./tmp:/app/tmp
+      - ./data:/app/data

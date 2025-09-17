@@ -59,6 +59,7 @@ Create a `.env` file (or reuse an existing one) with the required secrets, then 
 ```bash
 docker run --name call-transcribe \
   --env-file .env \
+  -p 16384:16384 \
   -v $(pwd)/tmp:/app/tmp \
   call-transcribe-bot
 ```
@@ -80,6 +81,44 @@ sudo chown -R 1000:1000 tmp
 ```
 
 Otherwise the bot cannot create per-guild recording folders and will log `EACCES` errors when it tries to join voice channels.
+
+## Autostart with systemd
+
+To keep the bot running after reboots, install the provided systemd unit (requires sudo privileges):
+
+```bash
+./scripts/install_systemd_service.sh
+```
+
+The script writes `/etc/systemd/system/call-transcribe-bot.service`, reloads systemd, and enables the service so the container starts at boot. Override the unit name if you manage multiple deployments:
+
+```bash
+./scripts/install_systemd_service.sh --service-name my-call-transcribe
+```
+
+Check the service status or view logs with the usual systemd commands:
+
+```bash
+systemctl status call-transcribe-bot
+journalctl -u call-transcribe-bot -f
+```
+
+## Exposing the web UI via HTTPS
+
+The bot now ships a lightweight web dashboard on port `16384` (configurable via the `PORT` environment variable). To publish it at `https://transcriptions.velab.dev`, use the helper script below on the host that runs Nginx:
+
+```bash
+sudo ./scripts/setup_nginx.sh --email you@example.com
+```
+
+Flags you may find useful:
+
+- `--domain` &mdash; change the hostname (default: `transcriptions.velab.dev`).
+- `--backend-port` &mdash; update the upstream port if you changed `PORT`.
+- `--skip-certbot` &mdash; only write the Nginx config (no certificate request).
+- `--staging` &mdash; request a staging certificate while testing.
+
+The script creates `/etc/nginx/sites-available/<domain>.conf`, symlinks it into `sites-enabled`, reloads Nginx, and (by default) obtains a Let's Encrypt certificate using the webroot plugin. Ensure the domain's DNS A/AAAA records already point at your server before running the script.
 
 ## Next steps
 

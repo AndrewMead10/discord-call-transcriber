@@ -1,6 +1,8 @@
 require('dotenv').config();
 const path = require('path');
 const { CallTranscribeBot } = require('./bot');
+const { createDatabase } = require('./db');
+const { startHttpServer } = require('./server/httpServer');
 
 const token = process.env.DISCORD_TOKEN;
 
@@ -9,14 +11,28 @@ if (!token) {
   process.exit(1);
 }
 
+const recordingRoot = path.resolve(__dirname, '..', 'tmp');
+const webRoot = path.resolve(__dirname, 'server', 'web');
+const database = createDatabase(process.env.DATABASE_PATH);
+
+const port = Number(process.env.PORT || 16384);
+
+const http = startHttpServer({
+  database,
+  recordingRoot,
+  webRoot,
+  port,
+});
+
 const bot = new CallTranscribeBot({
   token,
-  recordingRoot: path.resolve(__dirname, '..', 'tmp'),
+  recordingRoot,
   transcriptionConfig: {
     url: process.env.TRANSCRIPTION_URL,
     apiKey: process.env.TRANSCRIPTION_API_KEY,
     headerName: process.env.TRANSCRIPTION_HEADER_NAME,
   },
+  database,
 });
 
 bot
@@ -24,5 +40,17 @@ bot
   .then(() => console.log('Bot is running.'))
   .catch((error) => {
     console.error('Failed to login:', error);
+    http.server.close();
     process.exit(1);
   });
+
+const shutdown = () => {
+  console.log('Shutting down...');
+  http.server.close(() => {
+    console.log('HTTP server closed.');
+    process.exit(0);
+  });
+};
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
