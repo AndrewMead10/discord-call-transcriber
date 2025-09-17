@@ -4,7 +4,7 @@ Discord bot that joins the voice channel of the user who mentions it, records ea
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 22.12 or newer
 - Discord application with a bot token
 - The following gateway intents enabled for the bot: **Message Content**, **Server Members**, and **Presence** (Message Content is required to detect mentions).
 - FFmpeg is **not** required because recording happens through PCM decoding only.
@@ -14,6 +14,8 @@ Discord bot that joins the voice channel of the user who mentions it, records ea
 ```bash
 npm install
 ```
+
+If you manage Node versions manually, ensure the runtime is at least `22.12.0` (the bot defines this in `package.json"engines"`).
 
 If the install command fails due to network restrictions, ensure the dependencies listed in `package.json` are downloaded manually: `discord.js`, `@discordjs/voice`, `prism-media`, and `dotenv`.
 

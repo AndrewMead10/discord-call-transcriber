@@ -1,8 +1,14 @@
-FROM node:20-slim
+FROM node:22-slim
 
 ENV NODE_ENV=production
+ENV PYTHON=/usr/bin/python3
 
 WORKDIR /app
+
+# System dependencies for native modules
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 build-essential \
+  && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies first to leverage Docker layer caching
 COPY package*.json ./
