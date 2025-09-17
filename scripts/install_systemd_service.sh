@@ -35,7 +35,7 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
   shift
-fi
+done
 
 if [[ ! -f "$COMPOSE_FILE" ]]; then
   echo "docker-compose.yml not found at $COMPOSE_FILE" >&2

@@ -190,10 +190,13 @@
         const headerEl = document.createElement('div');
         headerEl.className = 'segment-header';
 
+        const headerMain = document.createElement('div');
+        headerMain.className = 'segment-header-main';
+
         const titleEl = document.createElement('div');
         titleEl.className = 'segment-title';
         titleEl.textContent = segment.label || segment.userId || 'Unknown speaker';
-        headerEl.appendChild(titleEl);
+        headerMain.appendChild(titleEl);
 
         const actions = document.createElement('div');
         actions.className = 'segment-actions';
@@ -230,14 +233,11 @@
           actions.appendChild(disabledButton);
         }
 
-        headerEl.appendChild(actions);
-
-        if (segment.startedAt) {
-          const metaEl = document.createElement('div');
-          metaEl.className = 'segment-meta';
-          metaEl.textContent = formatDate(segment.startedAt);
-          headerEl.appendChild(metaEl);
+        if (actions.children.length) {
+          headerMain.appendChild(actions);
         }
+
+        headerEl.appendChild(headerMain);
 
         segmentEl.appendChild(headerEl);
 
