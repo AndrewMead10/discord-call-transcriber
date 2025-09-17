@@ -8,6 +8,7 @@ Discord bot that joins the voice channel of the user who mentions it, records ea
 - Discord application with a bot token
 - The following gateway intents enabled for the bot: **Message Content**, **Server Members**, and **Presence** (Message Content is required to detect mentions).
 - FFmpeg is **not** required because recording happens through PCM decoding only.
+- Native voice support depends on the [DAVE](https://discord.com/blog/addition-of-dave-voice) protocol; the required runtime library `@snazzah/davey` is shipped automatically via npm/dependency installation.
 
 ## Installation
 
