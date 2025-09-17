@@ -44,7 +44,7 @@ npm start
 
 Once running, invite the bot to your server and mention it from a text channel while you are connected to a voice channel. The bot will hop into your voice channel, begin recording, and acknowledge that it is capturing audio. Mention the bot again with the word `leave`, `stop`, or `done` to end the session. Audio is saved under `tmp/<guildId>/<sessionId>/<userId>/*.pcm`.
 
-If a transcription endpoint is configured, the bot will convert each recorded PCM segment to WAV and POST it (as `file` in `multipart/form-data`) to the provided `TRANSCRIPTION_URL`, then assemble the returned text into a channel transcript. The API key is sent in the `X-API-Key` header by default; override `TRANSCRIPTION_HEADER_NAME` if your service expects a different header (e.g., `Authorization`).
+If a transcription endpoint is configured, the bot will convert each recorded PCM segment to mono 16 kHz WAV and POST it (as `file` in `multipart/form-data`) to the provided `TRANSCRIPTION_URL`, then assemble the returned text into a channel transcript. The API key is sent in the `X-API-Key` header by default; override `TRANSCRIPTION_HEADER_NAME` if your service expects a different header (e.g., `Authorization`).
 
 ## Running with Docker
 

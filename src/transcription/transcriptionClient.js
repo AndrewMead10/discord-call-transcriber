@@ -2,8 +2,10 @@ const path = require('path');
 const fsp = require('fs/promises');
 const crypto = require('crypto');
 
-const SAMPLE_RATE = 48_000;
-const CHANNELS = 2;
+const SOURCE_SAMPLE_RATE = 48_000;
+const SOURCE_CHANNELS = 2;
+const TARGET_SAMPLE_RATE = 16_000;
+const TARGET_CHANNELS = 1;
 const BIT_DEPTH = 16;
 
 function createWavHeader(dataLength, { sampleRate, channels, bitDepth }) {
@@ -26,19 +28,66 @@ function createWavHeader(dataLength, { sampleRate, channels, bitDepth }) {
   return buffer;
 }
 
+function pcmStereo48kToMono16k(buffer) {
+  if (buffer.length === 0) {
+    throw new Error('PCM buffer is empty');
+  }
+
+  const totalSamples = buffer.length / 2; // int16 samples across both channels
+  if (totalSamples % SOURCE_CHANNELS !== 0) {
+    throw new Error(`Unexpected PCM sample count for stereo audio: ${totalSamples}`);
+  }
+
+  const view = new Int16Array(buffer.buffer, buffer.byteOffset, totalSamples);
+  const frameCount = totalSamples / SOURCE_CHANNELS;
+  const monoSamples = new Float64Array(frameCount);
+
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    const left = view[frame * SOURCE_CHANNELS];
+    const right = view[frame * SOURCE_CHANNELS + 1];
+    monoSamples[frame] = (left + right) / 2;
+  }
+
+  const downsampleFactor = SOURCE_SAMPLE_RATE / TARGET_SAMPLE_RATE;
+  if (Math.abs(downsampleFactor - Math.round(downsampleFactor)) > 1e-6) {
+    throw new Error(`Downsample factor must be integer; got ${downsampleFactor}`);
+  }
+
+  const factor = Math.round(downsampleFactor);
+  const downsampledLength = Math.max(1, Math.floor(frameCount / factor));
+  const downsampled = new Int16Array(downsampledLength);
+
+  for (let i = 0; i < downsampledLength; i += 1) {
+    const start = i * factor;
+    let sum = 0;
+    let count = 0;
+    for (let j = 0; j < factor && start + j < frameCount; j += 1) {
+      sum += monoSamples[start + j];
+      count += 1;
+    }
+    const avg = sum / count;
+    const clamped = Math.max(-32768, Math.min(32767, Math.round(avg)));
+    downsampled[i] = clamped;
+  }
+
+  return Buffer.from(downsampled.buffer, downsampled.byteOffset, downsampled.byteLength);
+}
+
 async function pcmToWav(pcmPath) {
   const pcmData = await fsp.readFile(pcmPath);
   if (pcmData.length === 0) {
     throw new Error(`PCM file is empty: ${pcmPath}`);
   }
 
-  const header = createWavHeader(pcmData.length, {
-    sampleRate: SAMPLE_RATE,
-    channels: CHANNELS,
+  const mono16k = pcmStereo48kToMono16k(pcmData);
+
+  const header = createWavHeader(mono16k.length, {
+    sampleRate: TARGET_SAMPLE_RATE,
+    channels: TARGET_CHANNELS,
     bitDepth: BIT_DEPTH,
   });
 
-  const wavBuffer = Buffer.concat([header, pcmData]);
+  const wavBuffer = Buffer.concat([header, mono16k]);
   const wavPath = pcmPath.replace(/\.pcm$/i, '') + '.wav';
   await fsp.writeFile(wavPath, wavBuffer);
   return wavPath;
