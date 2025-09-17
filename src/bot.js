@@ -172,7 +172,7 @@ class CallTranscribeBot {
         const chunks = chunkText(transcript, 1900);
         await message.reply('Recording stopped. Here is the transcript:');
         for (const chunk of chunks) {
-          await message.channel.send(````\n${chunk}\n```);
+          await message.channel.send('```\n' + chunk + '\n```');
         }
       } else {
         await message.reply('Recording stopped. Transcription service responded without content.');
