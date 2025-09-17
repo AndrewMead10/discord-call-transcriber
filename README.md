@@ -33,7 +33,8 @@ cp .env.example .env
 | `DISCORD_TOKEN` | Bot token from the Discord developer portal. |
 | `GUILD_ID` | (Optional) Restrict the bot to a single guild. Not currently used in code but reserved for future filtering. |
 | `TRANSCRIPTION_URL` | HTTPS endpoint that will receive the recording manifest. Leave blank to skip the forwarding step. |
-| `TRANSCRIPTION_API_KEY` | Bearer token used by the transcription endpoint. |
+| `TRANSCRIPTION_API_KEY` | API key sent to the transcription endpoint. |
+| `TRANSCRIPTION_HEADER_NAME` | (Optional) Header name used for the API key. Defaults to `X-API-Key`. |
 
 ## Running the bot
 
@@ -43,7 +44,7 @@ npm start
 
 Once running, invite the bot to your server and mention it from a text channel while you are connected to a voice channel. The bot will hop into your voice channel, begin recording, and acknowledge that it is capturing audio. Mention the bot again with the word `leave`, `stop`, or `done` to end the session. Audio is saved under `tmp/<guildId>/<sessionId>/<userId>/*.pcm`.
 
-If a transcription endpoint is configured, the bot will POST the manifest (list of audio file paths) to the provided `TRANSCRIPTION_URL`. Implement your service to pull the audio files or extend `src/transcription/transcriptionClient.js` to stream the binary payload as required.
+If a transcription endpoint is configured, the bot will POST the manifest (list of audio file paths) to the provided `TRANSCRIPTION_URL`. Implement your service to pull the audio files or extend `src/transcription/transcriptionClient.js` to stream the binary payload as required. The API key is sent in the `X-API-Key` header by default; override `TRANSCRIPTION_HEADER_NAME` if your service expects a different header (e.g., `Authorization`).
 
 ## Running with Docker
 
@@ -71,6 +72,14 @@ docker compose up --build -d
 ```
 
 `docker compose down` stops the container while leaving recordings in `./tmp`. Adjust `docker-compose.yml` to set resource limits or add sidecar services (e.g., a transcription worker) as needed.
+
+If you bind-mount `./tmp`, ensure the directory on the host is writable by UID 1000 (the `node` user inside the container). For example:
+
+```bash
+sudo chown -R 1000:1000 tmp
+```
+
+Otherwise the bot cannot create per-guild recording folders and will log `EACCES` errors when it tries to join voice channels.
 
 ## Next steps
 

@@ -15,6 +15,7 @@ const bot = new CallTranscribeBot({
   transcriptionConfig: {
     url: process.env.TRANSCRIPTION_URL,
     apiKey: process.env.TRANSCRIPTION_API_KEY,
+    headerName: process.env.TRANSCRIPTION_HEADER_NAME,
   },
 });
 

@@ -1,7 +1,8 @@
 class TranscriptionClient {
-  constructor({ url, apiKey } = {}) {
+  constructor({ url, apiKey, headerName } = {}) {
     this.url = url?.trim() || null;
     this.apiKey = apiKey?.trim() || null;
+    this.headerName = headerName?.trim() || 'X-API-Key';
   }
 
   isConfigured() {
@@ -18,12 +19,14 @@ class TranscriptionClient {
     }
 
     try {
+      const headers = {
+        'Content-Type': 'application/json',
+        [this.headerName]: this.apiKey,
+      };
+
       const response = await fetch(this.url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`,
-        },
+        headers,
         body: JSON.stringify(manifest),
       });
 
