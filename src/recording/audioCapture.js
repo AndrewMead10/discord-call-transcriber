@@ -12,6 +12,7 @@ class AudioCaptureSession {
     this.baseDir = baseDir;
     this.recordings = new Map();
     this.labels = new Map();
+    this.activeCaptures = new Map();
     this.resolveLabel = resolveLabel ?? (() => null);
     this.cleanups = [];
     this.sessionId = `${Date.now()}`;
@@ -27,6 +28,17 @@ class AudioCaptureSession {
     const receiver = this.connection.receiver;
 
     const speakingStart = async (userId) => {
+      if (!userId) {
+        return;
+      }
+      if (this.activeCaptures.has(userId)) {
+        return;
+      }
+
+      const startedAt = Date.now();
+      this.activeCaptures.set(userId, { startedAt });
+      let fileStream;
+
       try {
         const userDir = path.join(this.sessionDir, userId);
         await fsp.mkdir(userDir, { recursive: true });
@@ -44,15 +56,15 @@ class AudioCaptureSession {
           rate: 48000,
         });
 
-        const startedAt = Date.now();
         const filename = `${startedAt}.pcm`;
         const filePath = path.join(userDir, filename);
-        const fileStream = fs.createWriteStream(filePath);
+        fileStream = fs.createWriteStream(filePath);
 
         pipeline(opusStream, pcmStream, fileStream, (error) => {
           if (error) {
             console.error(`Audio pipeline error for ${userId}:`, error);
           }
+          this.activeCaptures.delete(userId);
         });
 
         const recordings = this.recordings.get(userId) ?? [];
@@ -65,12 +77,17 @@ class AudioCaptureSession {
         }
 
         this.cleanups.push(() => {
-          if (!fileStream.closed) {
+          this.activeCaptures.delete(userId);
+          if (fileStream && !fileStream.closed) {
             fileStream.end();
           }
         });
       } catch (error) {
         console.error(`Failed to start capture for ${userId}:`, error);
+        this.activeCaptures.delete(userId);
+        if (fileStream && !fileStream.closed) {
+          fileStream.end();
+        }
       }
     };
 
