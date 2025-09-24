@@ -73,6 +73,23 @@ function buildRouter({ database, recordingRoot }) {
     }
   });
 
+  router.delete('/sessions/:sessionId', (req, res) => {
+    try {
+      const sessionId = req.params.sessionId;
+      const deleted = database.deleteSession(sessionId);
+
+      if (!deleted) {
+        res.status(404).json({ error: 'Session not found' });
+        return;
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Failed to delete session:', error);
+      res.status(500).json({ error: 'Failed to delete session' });
+    }
+  });
+
   return router;
 }
 

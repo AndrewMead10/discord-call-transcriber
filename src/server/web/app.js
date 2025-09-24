@@ -80,8 +80,8 @@
   }
 
   function createSessionItem(session) {
-    const item = document.createElement('button');
-    item.type = 'button';
+    const item = document.createElement('a');
+    item.href = `/?session=${encodeURIComponent(session.id)}`;
     item.className = 'session-item';
     item.dataset.sessionId = session.id;
 
@@ -101,11 +101,17 @@
       .join(' • ');
     item.appendChild(meta);
 
-    item.addEventListener('click', () => {
+    item.addEventListener('click', (event) => {
+      event.preventDefault();
       if (session.id === activeSessionId) {
         return;
       }
       selectSession(session.id);
+
+      // Update URL without reload
+      const newUrl = new URL(window.location);
+      newUrl.searchParams.set('session', session.id);
+      window.history.pushState({}, '', newUrl);
     });
 
     if (session.id === activeSessionId) {
@@ -121,7 +127,6 @@
       const empty = document.createElement('div');
       empty.className = 'session-item';
       empty.textContent = 'No sessions recorded yet.';
-      empty.disabled = true;
       sessionListEl.appendChild(empty);
       return;
     }
@@ -179,6 +184,16 @@
       });
     });
     header.appendChild(shareButton);
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'delete-button';
+    deleteButton.textContent = '🗑️ Delete';
+    deleteButton.setAttribute('aria-label', 'Delete this session');
+    deleteButton.addEventListener('click', () => {
+      showDeleteConfirmation(session.id);
+    });
+    header.appendChild(deleteButton);
 
     sessionDetailEl.appendChild(header);
 
@@ -312,6 +327,81 @@
     const error = document.createElement('p');
     error.textContent = message;
     sessionDetailEl.appendChild(error);
+  }
+
+  function showDeleteConfirmation(sessionId) {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+      <div class="modal-content">
+        <h3>Delete Session</h3>
+        <p>Are you sure you want to delete this session? This action cannot be undone.</p>
+        <form id="delete-form">
+          <div class="form-group">
+            <label for="delete-password">Enter password to confirm:</label>
+            <input type="password" id="delete-password" required>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="cancel-button">Cancel</button>
+            <button type="submit" class="confirm-delete-button">Delete</button>
+          </div>
+        </form>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const form = modal.querySelector('#delete-form');
+    const cancelButton = modal.querySelector('.cancel-button');
+    const passwordInput = modal.querySelector('#delete-password');
+
+    const closeModal = () => {
+      document.body.removeChild(modal);
+    };
+
+    cancelButton.addEventListener('click', closeModal);
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const password = passwordInput.value;
+
+      if (password !== 'ihatetranscribing') {
+        alert('Incorrect password');
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+          method: 'DELETE',
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to delete session: ${response.status}`);
+        }
+
+        closeModal();
+        sessions = sessions.filter(s => s.id !== sessionId);
+        renderSessionList();
+
+        if (sessions.length > 0) {
+          selectSession(sessions[0].id);
+        } else {
+          sessionDetailEl.classList.add('empty');
+          sessionDetailEl.innerHTML = '<p>No sessions available yet.</p>';
+        }
+
+        activeSessionId = null;
+      } catch (error) {
+        console.error('Failed to delete session', error);
+        alert('Failed to delete session');
+      }
+    });
+
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        closeModal();
+      }
+    });
   }
 
   async function selectSession(sessionId) {

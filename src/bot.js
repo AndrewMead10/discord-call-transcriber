@@ -205,7 +205,7 @@ class CallTranscribeBot {
       const transcript = transcriptionResult.data?.transcript;
       if (transcript) {
         const sessionId = manifest.sessionId;
-        const baseUrl = process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 16384}`;
+        const baseUrl = (process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 16384}`).replace(/\/$/, '');
         const shareUrl = `${baseUrl}/?session=${encodeURIComponent(sessionId)}`;
 
         await message.reply('Recording stopped. View the transcription here:');

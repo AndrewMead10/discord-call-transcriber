@@ -79,6 +79,7 @@ function createDatabase(dbPath = process.env.DATABASE_PATH) {
 
   const deleteSegmentsStmt = db.prepare('DELETE FROM segments WHERE session_id = ?');
   const deleteParticipantsStmt = db.prepare('DELETE FROM session_participants WHERE session_id = ?');
+  const deleteSessionStmt = db.prepare('DELETE FROM sessions WHERE id = ?');
 
   const saveSession = db.transaction(({ session, participants, segments }) => {
     insertSessionStmt.run(session);
@@ -145,6 +146,15 @@ function createDatabase(dbPath = process.env.DATABASE_PATH) {
       const participants = listParticipantsStmt.all(sessionId);
       const segments = listSegmentsStmt.all(sessionId);
       return { session, participants, segments };
+    },
+    deleteSession(sessionId) {
+      const session = getSessionStmt.get(sessionId);
+      if (!session) {
+        return false;
+      }
+
+      const result = deleteSessionStmt.run(sessionId);
+      return result.changes > 0;
     },
   };
 }
