@@ -10,8 +10,30 @@ const BIT_DEPTH = 16;
 const SOURCE_FRAME_BYTES = SOURCE_CHANNELS * (BIT_DEPTH / 8);
 const MIN_SPLIT_PADDING_MS = 50;
 const MIN_PART_DURATION_MS = 80;
-const BATCH_FILE_FIELD_PRIMARY = 'files';
 const BATCH_FILE_FIELD_FALLBACK = 'file';
+
+function extractTranscription(bodyText) {
+  if (!bodyText) {
+    return '';
+  }
+
+  try {
+    const parsed = JSON.parse(bodyText);
+    if (typeof parsed === 'string') {
+      return parsed;
+    }
+    if (parsed && typeof parsed.transcription === 'string') {
+      return parsed.transcription;
+    }
+    if (parsed && typeof parsed.text === 'string') {
+      return parsed.text;
+    }
+  } catch (_) {
+    // Treat non-JSON bodies as plain text responses.
+  }
+
+  return bodyText.replace(/^"|"$/g, '').trim();
+}
 
 function createWavHeader(dataLength, { sampleRate, channels, bitDepth }) {
   const buffer = Buffer.alloc(44);
@@ -329,135 +351,46 @@ class TranscriptionClient {
     }
 
     if (pendingUploads.length) {
-      const formData = new FormData();
       for (const upload of pendingUploads) {
+        const formData = new FormData();
         const file = new File([upload.wavBuffer], upload.wavFileName, { type: 'audio/wav' });
-        formData.append(BATCH_FILE_FIELD_PRIMARY, file);
-        formData.append(BATCH_FILE_FIELD_FALLBACK, file); // Allow services expecting either `files` or `file`
+        formData.append(BATCH_FILE_FIELD_FALLBACK, file);
         upload.wavBuffer = null;
-      }
 
-      let batchResponse;
-      try {
-        const response = await fetch(this.url, {
-          method: 'POST',
-          headers: {
-            [this.headerName]: this.apiKey,
-          },
-          body: formData,
-        });
+        try {
+          const response = await fetch(this.url, {
+            method: 'POST',
+            headers: {
+              [this.headerName]: this.apiKey,
+            },
+            body: formData,
+          });
 
-        const bodyText = await response.text();
-        if (!response.ok) {
-          throw new Error(`Service responded with ${response.status}: ${bodyText}`);
-        }
+          const bodyText = await response.text();
+          if (!response.ok) {
+            throw new Error(`Service responded with ${response.status}: ${bodyText}`);
+          }
 
-        batchResponse = bodyText ? JSON.parse(bodyText) : {};
-      } catch (error) {
-        for (const upload of pendingUploads) {
+          const transcription = extractTranscription(bodyText);
+          if (typeof transcription !== 'string') {
+            throw new Error('Transcription response was not a string');
+          }
+
+          segments.push({
+            id: crypto.randomUUID(),
+            userId: upload.userId,
+            label: upload.label,
+            startedAt: upload.startedAt,
+            text: transcription.trim(),
+            audioPath: upload.wavPath,
+          });
+        } catch (error) {
           errors.push({
             userId: upload.userId,
             label: upload.label,
             filePath: upload.wavPath,
             startedAt: upload.startedAt,
-            reason: `Batch request failed: ${error.message}`,
-          });
-        }
-
-        return {
-          status: 'failed',
-          reason: `Batch transcription failed: ${error.message}`,
-          errors,
-        };
-      }
-
-      const uploadByName = new Map();
-      for (const upload of pendingUploads) {
-        uploadByName.set(upload.wavFileName, {
-          ...upload,
-          error: null,
-          handled: false,
-        });
-      }
-
-      const responseErrors = Array.isArray(batchResponse?.errors) ? batchResponse.errors : [];
-      for (const item of responseErrors) {
-        if (!item) {
-          continue;
-        }
-        const filename = item.filename ?? item.file ?? item.name ?? null;
-        const detail = typeof item.error === 'string'
-          ? item.error
-          : typeof item.detail === 'string'
-            ? item.detail
-            : JSON.stringify(item);
-        const target = filename ? uploadByName.get(filename) : null;
-        if (target) {
-          target.error = detail;
-          errors.push({
-            userId: target.userId,
-            label: target.label,
-            filePath: target.wavPath,
-            startedAt: target.startedAt,
-            reason: detail,
-          });
-        } else {
-          errors.push({
-            userId: null,
-            label: filename ?? 'unknown',
-            filePath: null,
-            startedAt: null,
-            reason: detail,
-          });
-        }
-      }
-
-      const responseResults = Array.isArray(batchResponse?.results) ? batchResponse.results : [];
-      for (const item of responseResults) {
-        if (!item) {
-          continue;
-        }
-        const filename = item.filename ?? null;
-        if (!filename) {
-          continue;
-        }
-
-        const target = uploadByName.get(filename);
-        if (!target) {
-          errors.push({
-            userId: null,
-            label: filename,
-            filePath: null,
-            startedAt: null,
-            reason: 'Received transcription for unknown segment',
-          });
-          continue;
-        }
-
-        if (target.error) {
-          continue;
-        }
-
-        const transcription = typeof item.transcription === 'string' ? item.transcription : '';
-        segments.push({
-          id: crypto.randomUUID(),
-          userId: target.userId,
-          label: target.label,
-          startedAt: target.startedAt,
-          text: transcription.trim(),
-          audioPath: target.wavPath,
-        });
-        target.handled = true;
-      }
-
-      for (const target of uploadByName.values()) {
-        if (!target.error && !target.handled) {
-          errors.push({
-            userId: target.userId,
-            label: target.label,
-            filePath: target.wavPath,
-            startedAt: target.startedAt,
-            reason: 'No transcription returned for segment',
+            reason: `Upload failed: ${error.message}`,
           });
         }
       }
