@@ -7,6 +7,9 @@ const SOURCE_CHANNELS = 2;
 const TARGET_SAMPLE_RATE = 16_000;
 const TARGET_CHANNELS = 1;
 const BIT_DEPTH = 16;
+const SOURCE_FRAME_BYTES = SOURCE_CHANNELS * (BIT_DEPTH / 8);
+const MIN_SPLIT_PADDING_MS = 50;
+const MIN_PART_DURATION_MS = 80;
 
 function createWavHeader(dataLength, { sampleRate, channels, bitDepth }) {
   const buffer = Buffer.alloc(44);
@@ -73,13 +76,12 @@ function pcmStereo48kToMono16k(buffer) {
   return Buffer.from(downsampled.buffer, downsampled.byteOffset, downsampled.byteLength);
 }
 
-async function pcmToWav(pcmPath) {
-  const pcmData = await fsp.readFile(pcmPath);
-  if (pcmData.length === 0) {
-    throw new Error(`PCM file is empty: ${pcmPath}`);
+async function writeWavFromPcm(pcmBuffer, wavPath) {
+  if (!pcmBuffer || pcmBuffer.length === 0) {
+    throw new Error('PCM buffer is empty');
   }
 
-  const mono16k = pcmStereo48kToMono16k(pcmData);
+  const mono16k = pcmStereo48kToMono16k(pcmBuffer);
 
   const header = createWavHeader(mono16k.length, {
     sampleRate: TARGET_SAMPLE_RATE,
@@ -88,9 +90,9 @@ async function pcmToWav(pcmPath) {
   });
 
   const wavBuffer = Buffer.concat([header, mono16k]);
-  const wavPath = pcmPath.replace(/\.pcm$/i, '') + '.wav';
+  await fsp.mkdir(path.dirname(wavPath), { recursive: true });
   await fsp.writeFile(wavPath, wavBuffer);
-  return wavPath;
+  return wavBuffer;
 }
 
 class TranscriptionClient {
@@ -122,49 +124,233 @@ class TranscriptionClient {
     const segments = [];
     const errors = [];
 
-    for (const [userId, items] of recordingEntries) {
+    const startEvents = [];
+    for (const [eventUserId, items] of recordingEntries) {
       for (const item of items) {
-        try {
-          const wavPath = await pcmToWav(item.filePath);
-          const fileData = await fsp.readFile(wavPath);
-          const filename = path.basename(wavPath);
+        if (!item) {
+          continue;
+        }
+        const startedAt = Number.isFinite(item.startedAt) ? item.startedAt : 0;
+        startEvents.push({ userId: eventUserId, startedAt });
+      }
+    }
 
-          const formData = new FormData();
-          const file = new File([fileData], filename, { type: 'audio/wav' });
-          formData.append('file', file);
+    startEvents.sort((a, b) => a.startedAt - b.startedAt);
 
-          const response = await fetch(this.url, {
-            method: 'POST',
-            headers: {
-              [this.headerName]: this.apiKey,
-            },
-            body: formData,
-          });
-
-          if (!response.ok) {
-            const text = await response.text();
-            throw new Error(`Service responded with ${response.status}: ${text}`);
-          }
-
-          const text = await response.text();
-          const cleaned = text.trim();
-          const label = labels[userId] ?? userId;
-          segments.push({
-            id: crypto.randomUUID(),
-            userId,
-            label,
-            startedAt: item.startedAt ?? null,
-            text: cleaned,
-            audioPath: wavPath,
-          });
-        } catch (error) {
-          const label = labels[userId] ?? userId;
+    for (const [userId, items] of recordingEntries) {
+      const label = labels[userId] ?? userId;
+      for (const item of items) {
+        if (!item?.filePath) {
           errors.push({
             userId,
             label,
-            filePath: item.filePath,
-            reason: error.message,
+            filePath: null,
+            startedAt: item?.startedAt ?? null,
+            reason: 'Recording item was missing a file path',
           });
+          continue;
+        }
+
+        const startedAt = Number.isFinite(item.startedAt) ? item.startedAt : 0;
+        const absolutePath = path.resolve(item.filePath);
+
+        let stats;
+        try {
+          stats = await fsp.stat(absolutePath);
+        } catch (error) {
+          errors.push({
+            userId,
+            label,
+            filePath: absolutePath,
+            startedAt,
+            reason: `Unable to access PCM file: ${error.message}`,
+          });
+          continue;
+        }
+
+        if (!stats.isFile()) {
+          errors.push({
+            userId,
+            label,
+            filePath: absolutePath,
+            startedAt,
+            reason: 'PCM entry was not a file',
+          });
+          continue;
+        }
+
+        if (stats.size === 0) {
+          errors.push({
+            userId,
+            label,
+            filePath: absolutePath,
+            startedAt,
+            reason: 'PCM file was empty',
+          });
+          continue;
+        }
+
+        if (stats.size % SOURCE_FRAME_BYTES !== 0) {
+          errors.push({
+            userId,
+            label,
+            filePath: absolutePath,
+            startedAt,
+            reason: `Unexpected PCM byte length: ${stats.size}`,
+          });
+          continue;
+        }
+
+        const sampleFrames = stats.size / SOURCE_FRAME_BYTES;
+        const durationMs = (sampleFrames / SOURCE_SAMPLE_RATE) * 1000;
+        const segmentEnd = startedAt + durationMs;
+
+        const splitSet = new Set();
+        let lastSplit = null;
+        for (const event of startEvents) {
+          if (event.startedAt <= startedAt) {
+            continue;
+          }
+          if (event.startedAt >= segmentEnd) {
+            break;
+          }
+          if (event.userId === userId) {
+            continue;
+          }
+          if (event.startedAt - startedAt < MIN_SPLIT_PADDING_MS) {
+            continue;
+          }
+          if (segmentEnd - event.startedAt < MIN_SPLIT_PADDING_MS) {
+            continue;
+          }
+          if (lastSplit !== null && Math.abs(event.startedAt - lastSplit) < MIN_SPLIT_PADDING_MS) {
+            continue;
+          }
+          splitSet.add(event.startedAt);
+          lastSplit = event.startedAt;
+        }
+
+        const splitTimes = Array.from(splitSet).sort((a, b) => a - b);
+
+        let pcmData;
+        try {
+          pcmData = await fsp.readFile(absolutePath);
+        } catch (error) {
+          errors.push({
+            userId,
+            label,
+            filePath: absolutePath,
+            startedAt,
+            reason: `Failed to load PCM data: ${error.message}`,
+          });
+          continue;
+        }
+
+        const boundaries = [...splitTimes, segmentEnd];
+        let previousSample = 0;
+        let previousTime = startedAt;
+        let partIndex = 0;
+
+        for (const boundaryTime of boundaries) {
+          const relativeMs = boundaryTime - startedAt;
+          let sampleIndex = Math.round((relativeMs / 1000) * SOURCE_SAMPLE_RATE);
+          if (sampleIndex < previousSample) {
+            sampleIndex = previousSample;
+          }
+          if (sampleIndex > sampleFrames) {
+            sampleIndex = sampleFrames;
+          }
+
+          if (sampleIndex === previousSample) {
+            previousTime = boundaryTime;
+            continue;
+          }
+
+          const byteStart = previousSample * SOURCE_FRAME_BYTES;
+          const byteEnd = sampleIndex * SOURCE_FRAME_BYTES;
+          const partBuffer = pcmData.subarray(byteStart, byteEnd);
+          const partStartTime = previousTime;
+          const partDuration = boundaryTime - previousTime;
+
+          previousSample = sampleIndex;
+          previousTime = boundaryTime;
+
+          if (!partBuffer.length || partDuration <= 0) {
+            continue;
+          }
+
+          if (partDuration < MIN_PART_DURATION_MS) {
+            // Allow overlapping fragments, but ensure they contain at least one frame.
+            const minimumBytes = SOURCE_FRAME_BYTES;
+            if (partBuffer.length < minimumBytes) {
+              continue;
+            }
+          }
+
+          partIndex += 1;
+
+          const isOverlapSplit = splitTimes.some((time) => Math.abs(time - partStartTime) < 0.5);
+          const adjustedStart = Number.isFinite(partStartTime)
+            ? partStartTime + (isOverlapSplit ? 1 : 0)
+            : 0;
+          const partStartedAt = Number.isFinite(adjustedStart) ? Math.round(adjustedStart) : 0;
+          const wavDir = path.join(path.dirname(absolutePath), 'segments');
+          const baseName = path.basename(absolutePath, '.pcm');
+          const wavFileName = `${baseName}_${partStartedAt}_${partIndex}.wav`;
+          const wavPath = path.join(wavDir, wavFileName);
+
+          let wavBuffer;
+          try {
+            wavBuffer = await writeWavFromPcm(partBuffer, wavPath);
+          } catch (error) {
+            errors.push({
+              userId,
+              label,
+              filePath: absolutePath,
+              startedAt: partStartedAt,
+              reason: `Failed to convert PCM: ${error.message}`,
+            });
+            continue;
+          }
+
+          try {
+            const formData = new FormData();
+            const file = new File([wavBuffer], path.basename(wavPath), { type: 'audio/wav' });
+            formData.append('file', file);
+
+            const response = await fetch(this.url, {
+              method: 'POST',
+              headers: {
+                [this.headerName]: this.apiKey,
+              },
+              body: formData,
+            });
+
+            if (!response.ok) {
+              const text = await response.text();
+              throw new Error(`Service responded with ${response.status}: ${text}`);
+            }
+
+            const text = await response.text();
+            const cleaned = text.trim();
+
+            segments.push({
+              id: crypto.randomUUID(),
+              userId,
+              label,
+              startedAt: partStartedAt,
+              text: cleaned,
+              audioPath: wavPath,
+            });
+          } catch (error) {
+            errors.push({
+              userId,
+              label,
+              filePath: absolutePath,
+              startedAt: partStartedAt,
+              reason: error.message,
+            });
+          }
         }
       }
     }
