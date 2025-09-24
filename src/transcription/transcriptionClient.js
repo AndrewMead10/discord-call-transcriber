@@ -10,6 +10,7 @@ const BIT_DEPTH = 16;
 const SOURCE_FRAME_BYTES = SOURCE_CHANNELS * (BIT_DEPTH / 8);
 const MIN_SPLIT_PADDING_MS = 50;
 const MIN_PART_DURATION_MS = 80;
+const BATCH_FILE_FIELD = 'files';
 
 function createWavHeader(dataLength, { sampleRate, channels, bitDepth }) {
   const buffer = Buffer.alloc(44);
@@ -330,7 +331,7 @@ class TranscriptionClient {
       const formData = new FormData();
       for (const upload of pendingUploads) {
         const file = new File([upload.wavBuffer], upload.wavFileName, { type: 'audio/wav' });
-        formData.append('files', file);
+        formData.append(BATCH_FILE_FIELD, file);
         upload.wavBuffer = null;
       }
 

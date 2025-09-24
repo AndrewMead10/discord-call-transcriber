@@ -204,11 +204,12 @@ class CallTranscribeBot {
     if (transcriptionResult.status === 'sent') {
       const transcript = transcriptionResult.data?.transcript;
       if (transcript) {
-        const chunks = chunkText(transcript, 1900);
-        await message.reply('Recording stopped. Here is the transcript:');
-        for (const chunk of chunks) {
-          await message.channel.send('```\n' + chunk + '\n```');
-        }
+        const sessionId = manifest.sessionId;
+        const baseUrl = process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 16384}`;
+        const shareUrl = `${baseUrl}/?session=${encodeURIComponent(sessionId)}`;
+
+        await message.reply('Recording stopped. View the transcription here:');
+        await message.channel.send(shareUrl);
       } else {
         await message.reply('Recording stopped. Transcription service responded without content.');
       }
