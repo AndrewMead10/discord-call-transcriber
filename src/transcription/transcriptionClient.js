@@ -10,7 +10,8 @@ const BIT_DEPTH = 16;
 const SOURCE_FRAME_BYTES = SOURCE_CHANNELS * (BIT_DEPTH / 8);
 const MIN_SPLIT_PADDING_MS = 50;
 const MIN_PART_DURATION_MS = 80;
-const BATCH_FILE_FIELD_FALLBACK = 'file';
+const PRIMARY_FILE_FIELD = 'file';
+const SECONDARY_FILE_FIELD = 'files';
 
 function extractTranscription(bodyText) {
   if (!bodyText) {
@@ -33,6 +34,41 @@ function extractTranscription(bodyText) {
   }
 
   return bodyText.replace(/^"|"$/g, '').trim();
+}
+
+function parseMissingField(bodyText) {
+  if (!bodyText) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(bodyText);
+    const details = Array.isArray(parsed?.detail) ? parsed.detail : [];
+    for (const item of details) {
+      if (!item?.loc) {
+        continue;
+      }
+      const path = Array.isArray(item.loc) ? item.loc : [];
+      if (path.length >= 2 && path[0] === 'body' && typeof path[1] === 'string') {
+        return path[1];
+      }
+    }
+  } catch (_) {
+    // Ignore JSON parse failures; fallback to null.
+  }
+
+  return null;
+}
+
+class UploadError extends Error {
+  constructor(message, { status, bodyText, attemptedField }) {
+    super(message);
+    this.name = 'UploadError';
+    this.status = status;
+    this.bodyText = bodyText;
+    this.attemptedField = attemptedField;
+    this.missingField = parseMissingField(bodyText);
+  }
 }
 
 function createWavHeader(dataLength, { sampleRate, channels, bitDepth }) {
@@ -350,30 +386,57 @@ class TranscriptionClient {
       }
     }
 
+    const sendUpload = async (upload, fieldName) => {
+      const formData = new FormData();
+      const file = new File([upload.wavBuffer], upload.wavFileName, { type: 'audio/wav' });
+      formData.append(fieldName, file, upload.wavFileName);
+
+      const response = await fetch(this.url, {
+        method: 'POST',
+        headers: {
+          [this.headerName]: this.apiKey,
+        },
+        body: formData,
+      });
+
+      const bodyText = await response.text();
+      if (!response.ok) {
+        throw new UploadError(`Service responded with ${response.status}`, {
+          status: response.status,
+          bodyText,
+          attemptedField: fieldName,
+        });
+      }
+
+      const transcription = extractTranscription(bodyText);
+      if (typeof transcription !== 'string') {
+        throw new UploadError('Transcription response was not a string', {
+          status: response.status,
+          bodyText,
+          attemptedField: fieldName,
+        });
+      }
+
+      return transcription;
+    };
+
     if (pendingUploads.length) {
       for (const upload of pendingUploads) {
-        const formData = new FormData();
-        const file = new File([upload.wavBuffer], upload.wavFileName, { type: 'audio/wav' });
-        formData.append(BATCH_FILE_FIELD_FALLBACK, file);
-        upload.wavBuffer = null;
-
+        const buffer = upload.wavBuffer;
         try {
-          const response = await fetch(this.url, {
-            method: 'POST',
-            headers: {
-              [this.headerName]: this.apiKey,
-            },
-            body: formData,
-          });
-
-          const bodyText = await response.text();
-          if (!response.ok) {
-            throw new Error(`Service responded with ${response.status}: ${bodyText}`);
-          }
-
-          const transcription = extractTranscription(bodyText);
-          if (typeof transcription !== 'string') {
-            throw new Error('Transcription response was not a string');
+          let transcription;
+          try {
+            transcription = await sendUpload(upload, PRIMARY_FILE_FIELD);
+          } catch (error) {
+            if (
+              error instanceof UploadError &&
+              error.status === 422 &&
+              error.missingField === PRIMARY_FILE_FIELD
+            ) {
+              transcription = await sendUpload({ ...upload, wavBuffer: buffer }, SECONDARY_FILE_FIELD);
+            } else {
+              throw error;
+            }
           }
 
           segments.push({
@@ -385,13 +448,18 @@ class TranscriptionClient {
             audioPath: upload.wavPath,
           });
         } catch (error) {
+          const message = error instanceof UploadError
+            ? `Upload failed (${error.attemptedField}): ${error.bodyText || error.message}`
+            : `Upload failed: ${error.message}`;
           errors.push({
             userId: upload.userId,
             label: upload.label,
             filePath: upload.wavPath,
             startedAt: upload.startedAt,
-            reason: `Upload failed: ${error.message}`,
+            reason: message,
           });
+        } finally {
+          upload.wavBuffer = null;
         }
       }
     }
