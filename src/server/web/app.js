@@ -154,6 +154,32 @@
     ].join(' | ');
     header.appendChild(meta);
 
+    const shareButton = document.createElement('button');
+    shareButton.type = 'button';
+    shareButton.className = 'share-button';
+    shareButton.textContent = '🔗 Share';
+    shareButton.setAttribute('aria-label', 'Copy link to this transcription');
+    shareButton.addEventListener('click', () => {
+      const shareUrl = `${window.location.origin}/?session=${encodeURIComponent(session.id)}`;
+      navigator.clipboard.writeText(shareUrl).then(() => {
+        const originalText = shareButton.textContent;
+        shareButton.textContent = '✅ Copied!';
+        shareButton.style.background = 'rgba(34, 197, 94, 0.15)';
+        shareButton.style.borderColor = 'rgba(34, 197, 94, 0.3)';
+        setTimeout(() => {
+          shareButton.textContent = originalText;
+          shareButton.style.background = '';
+          shareButton.style.borderColor = '';
+        }, 2000);
+      }).catch(() => {
+        shareButton.textContent = '❌ Failed';
+        setTimeout(() => {
+          shareButton.textContent = '🔗 Share';
+        }, 2000);
+      });
+    });
+    header.appendChild(shareButton);
+
     sessionDetailEl.appendChild(header);
 
     if (session.audioUrl) {
@@ -320,8 +346,21 @@
       return;
       }
 
-      const initialSession = sessions.find((item) => item.id === activeSessionId) || sessions[0];
-      selectSession(initialSession.id);
+      const urlParams = new URLSearchParams(window.location.search);
+      const sessionParam = urlParams.get('session');
+
+      if (sessionParam) {
+        const requestedSession = sessions.find((item) => item.id === sessionParam);
+        if (requestedSession) {
+          selectSession(requestedSession.id);
+        } else {
+          const initialSession = sessions[0];
+          selectSession(initialSession.id);
+        }
+      } else {
+        const initialSession = sessions.find((item) => item.id === activeSessionId) || sessions[0];
+        selectSession(initialSession.id);
+      }
     } catch (error) {
       console.error('Failed to load sessions', error);
       sessionDetailEl.classList.remove('empty');

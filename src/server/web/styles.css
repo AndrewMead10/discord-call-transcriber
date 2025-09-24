@@ -112,6 +112,28 @@ body {
   gap: 1rem;
   font-size: 0.95rem;
   color: var(--muted-color);
+  margin-bottom: 1rem;
+}
+
+.share-button {
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  color: var(--accent-color);
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: background 0.2s ease, border 0.2s ease, transform 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.share-button:hover {
+  background: rgba(37, 99, 235, 0.15);
+  border-color: var(--accent-color);
+  transform: translateY(-1px);
 }
 
 .participants {
