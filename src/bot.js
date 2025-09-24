@@ -7,6 +7,7 @@ const {
 } = require('@discordjs/voice');
 const path = require('path');
 const { AudioCaptureManager } = require('./recording/audioCapture');
+const { mixSessionAudio } = require('./recording/mixdown');
 const { TranscriptionClient } = require('./transcription/transcriptionClient');
 
 function chunkText(text, maxLength) {
@@ -185,6 +186,8 @@ class CallTranscribeBot {
       return;
     }
 
+    const mixdownPath = await mixSessionAudio({ manifest });
+
     const transcriptionResult = await this.transcriptionClient.submit(manifest);
 
     await this._persistSession({
@@ -193,6 +196,7 @@ class CallTranscribeBot {
       transcriptionResult,
       metadata,
       channelId,
+      mixdownPath,
     });
 
     this.sessionMetadata.delete(message.guild.id);
@@ -282,7 +286,7 @@ class CallTranscribeBot {
     };
   }
 
-  async _persistSession({ message, manifest, transcriptionResult, metadata, channelId }) {
+  async _persistSession({ message, manifest, transcriptionResult, metadata, channelId, mixdownPath }) {
     if (!this.database) {
       return;
     }
@@ -320,6 +324,10 @@ class CallTranscribeBot {
           : null,
       }));
 
+      const mixdownRelativePath = mixdownPath
+        ? path.relative(this.recordingRoot, mixdownPath)
+        : null;
+
       const sessionRecord = {
         id: sessionId,
         guildId: metadata?.guildId ?? message.guild.id,
@@ -329,6 +337,7 @@ class CallTranscribeBot {
         startedAt: sessionStartedAt,
         endedAt: now,
         transcript,
+        audioPath: mixdownRelativePath,
       };
 
       this.database.saveSession({

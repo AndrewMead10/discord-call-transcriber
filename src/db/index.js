@@ -26,7 +26,8 @@ function createDatabase(dbPath = process.env.DATABASE_PATH) {
       channel_name TEXT,
       started_at INTEGER,
       ended_at INTEGER,
-      transcript TEXT
+      transcript TEXT,
+      audio_path TEXT
     );
 
     CREATE TABLE IF NOT EXISTS session_participants (
@@ -50,10 +51,18 @@ function createDatabase(dbPath = process.env.DATABASE_PATH) {
     );
   `);
 
+  try {
+    db.prepare('ALTER TABLE sessions ADD COLUMN audio_path TEXT').run();
+  } catch (error) {
+    if (!/duplicate column name/i.test(error.message)) {
+      throw error;
+    }
+  }
+
   const insertSessionStmt = db.prepare(`
     INSERT OR REPLACE INTO sessions (
-      id, guild_id, guild_name, channel_id, channel_name, started_at, ended_at, transcript
-    ) VALUES (@id, @guildId, @guildName, @channelId, @channelName, @startedAt, @endedAt, @transcript)
+      id, guild_id, guild_name, channel_id, channel_name, started_at, ended_at, transcript, audio_path
+    ) VALUES (@id, @guildId, @guildName, @channelId, @channelName, @startedAt, @endedAt, @transcript, @audioPath)
   `);
 
   const insertParticipantStmt = db.prepare(`
@@ -91,6 +100,7 @@ function createDatabase(dbPath = process.env.DATABASE_PATH) {
            s.channel_name AS channelName,
            s.started_at AS startedAt,
            s.ended_at AS endedAt,
+           s.audio_path AS audioPath,
            COUNT(p.user_id) AS participantCount
     FROM sessions s
     LEFT JOIN session_participants p ON p.session_id = s.id
@@ -101,7 +111,7 @@ function createDatabase(dbPath = process.env.DATABASE_PATH) {
   const getSessionStmt = db.prepare(`
     SELECT id, guild_id AS guildId, guild_name AS guildName, channel_id AS channelId,
            channel_name AS channelName, started_at AS startedAt, ended_at AS endedAt,
-           transcript
+           transcript, audio_path AS audioPath
     FROM sessions
     WHERE id = ?
   `);

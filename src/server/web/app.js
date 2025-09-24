@@ -5,6 +5,7 @@
   let sessions = [];
   let activeSessionId = null;
   const audioElements = new Map();
+  let fullAudioElement = null;
 
   function formatDate(value) {
     if (!value) {
@@ -18,6 +19,11 @@
   }
 
   function clearAudioPlayers() {
+    if (fullAudioElement) {
+      fullAudioElement.pause();
+      fullAudioElement.currentTime = 0;
+      fullAudioElement = null;
+    }
     for (const { audio } of audioElements.values()) {
       audio.pause();
       audio.currentTime = 0;
@@ -149,6 +155,25 @@
     header.appendChild(meta);
 
     sessionDetailEl.appendChild(header);
+
+    if (session.audioUrl) {
+      const playback = document.createElement('section');
+      playback.className = 'session-playback';
+
+      const playbackTitle = document.createElement('h3');
+      playbackTitle.textContent = 'Full Recording';
+      playback.appendChild(playbackTitle);
+
+      const player = document.createElement('audio');
+      player.controls = true;
+      player.preload = 'none';
+      player.src = session.audioUrl;
+      playback.appendChild(player);
+
+      fullAudioElement = player;
+
+      sessionDetailEl.appendChild(playback);
+    }
 
     const participantsContainer = document.createElement('section');
     participantsContainer.className = 'participants';

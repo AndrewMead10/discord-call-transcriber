@@ -128,6 +128,20 @@ body {
   font-size: 1rem;
 }
 
+.session-playback {
+  margin-top: 1.5rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  padding: 1rem 1.25rem;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.05);
+}
+
+.session-playback h3 {
+  margin: 0 0 0.75rem 0;
+  font-size: 1rem;
+}
+
 .participant-list {
   display: flex;
   flex-wrap: wrap;

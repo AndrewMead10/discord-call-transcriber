@@ -27,6 +27,7 @@ function buildRouter({ database, recordingRoot }) {
         startedAt: session.startedAt,
         endedAt: session.endedAt,
         participantCount: session.participantCount ?? 0,
+        hasAudio: Boolean(session.audioPath),
       }));
       res.json({ sessions });
     } catch (error) {
@@ -44,6 +45,8 @@ function buildRouter({ database, recordingRoot }) {
       }
 
       const { session, participants, segments } = detail;
+      const mixdownPublicPath = normalizeRelativePath(session.audioPath);
+      const fullAudioUrl = mixdownPublicPath ? `/recordings/${mixdownPublicPath}` : null;
       const responseSegments = segments.map((segment) => {
         const publicPath = normalizeRelativePath(segment.audioPath);
         return {
@@ -57,7 +60,10 @@ function buildRouter({ database, recordingRoot }) {
       });
 
       res.json({
-        session,
+        session: {
+          ...session,
+          audioUrl: fullAudioUrl,
+        },
         participants,
         segments: responseSegments,
       });
