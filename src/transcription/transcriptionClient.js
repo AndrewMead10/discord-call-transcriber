@@ -13,6 +13,31 @@ const MIN_PART_DURATION_MS = 80;
 const PRIMARY_FILE_FIELD = 'file';
 const SECONDARY_FILE_FIELD = 'files';
 
+function resolveSingleUrl(url) {
+  if (!url) {
+    return null;
+  }
+  const trimmed = url.trim().replace(/\/+$/, '');
+  if (trimmed.endsWith('/batch')) {
+    return trimmed.slice(0, -'/batch'.length) || null;
+  }
+  return trimmed || null;
+}
+
+function resolveBatchUrl(url) {
+  if (!url) {
+    return null;
+  }
+  const trimmed = url.trim().replace(/\/+$/, '');
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.endsWith('/batch')) {
+    return trimmed;
+  }
+  return `${trimmed}/batch`;
+}
+
 function extractTranscription(bodyText) {
   if (!bodyText) {
     return '';
@@ -69,6 +94,287 @@ class UploadError extends Error {
     this.attemptedField = attemptedField;
     this.missingField = parseMissingField(bodyText);
   }
+}
+
+async function uploadBatch({ url, uploads, headerName, apiKey }) {
+  if (!url) {
+    throw new Error('Batch endpoint URL is not configured');
+  }
+  if (!uploads.length) {
+    return { segments: [], errors: [] };
+  }
+
+  const formData = new FormData();
+  for (const upload of uploads) {
+    if (!upload?.wavBuffer) {
+      continue;
+    }
+    const file = new File([upload.wavBuffer], upload.wavFileName, { type: 'audio/wav' });
+    formData.append(SECONDARY_FILE_FIELD, file, upload.wavFileName);
+  }
+
+  const headers = {};
+  if (apiKey) {
+    headers[headerName] = apiKey;
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+
+  const bodyText = await response.text();
+  if (!response.ok) {
+    throw new UploadError(`Batch service responded with ${response.status}`, {
+      status: response.status,
+      bodyText,
+      attemptedField: SECONDARY_FILE_FIELD,
+    });
+  }
+
+  let payload = {};
+  if (bodyText) {
+    try {
+      payload = JSON.parse(bodyText);
+    } catch (error) {
+      throw new UploadError('Batch response was not valid JSON', {
+        status: response.status,
+        bodyText,
+        attemptedField: SECONDARY_FILE_FIELD,
+      });
+    }
+  }
+
+  const results = Array.isArray(payload?.results) ? payload.results : [];
+  const responseErrors = Array.isArray(payload?.errors) ? payload.errors : [];
+
+  const uploadsByName = new Map();
+  for (const upload of uploads) {
+    uploadsByName.set(upload.wavFileName, {
+      upload,
+      handled: false,
+      errors: [],
+    });
+  }
+
+  const segments = [];
+  const errors = [];
+
+  for (const item of responseErrors) {
+    if (!item) {
+      continue;
+    }
+    const filename = item.filename ?? item.file ?? item.name ?? null;
+    const detail = typeof item.error === 'string'
+      ? item.error
+      : typeof item.detail === 'string'
+        ? item.detail
+        : typeof item.message === 'string'
+          ? item.message
+          : JSON.stringify(item);
+    if (filename && uploadsByName.has(filename)) {
+      uploadsByName.get(filename).errors.push(detail);
+    } else {
+      errors.push({
+        userId: null,
+        label: filename ?? 'unknown',
+        filePath: null,
+        startedAt: null,
+        reason: detail,
+      });
+    }
+  }
+
+  for (const item of results) {
+    if (!item) {
+      continue;
+    }
+    const filename = item.filename ?? item.file ?? item.name ?? null;
+    if (!filename) {
+      errors.push({
+        userId: null,
+        label: 'unknown',
+        filePath: null,
+        startedAt: null,
+        reason: 'Batch response entry was missing filename',
+      });
+      continue;
+    }
+    const target = uploadsByName.get(filename);
+    if (!target) {
+      errors.push({
+        userId: null,
+        label: filename,
+        filePath: null,
+        startedAt: null,
+        reason: 'Received transcription for unknown segment',
+      });
+      continue;
+    }
+
+    const transcription = typeof item.transcription === 'string'
+      ? item.transcription
+      : typeof item.text === 'string'
+        ? item.text
+        : '';
+
+    segments.push({
+      id: crypto.randomUUID(),
+      userId: target.upload.userId,
+      label: target.upload.label,
+      startedAt: target.upload.startedAt,
+      text: transcription.trim(),
+      audioPath: target.upload.wavPath,
+    });
+    target.handled = true;
+  }
+
+  for (const { upload, handled, errors: uploadErrors } of uploadsByName.values()) {
+    upload.wavBuffer = null;
+    if (!handled) {
+      const reason = uploadErrors.length
+        ? uploadErrors.join('; ')
+        : 'No transcription returned for segment';
+      errors.push({
+        userId: upload.userId,
+        label: upload.label,
+        filePath: upload.wavPath,
+        startedAt: upload.startedAt,
+        reason,
+      });
+    } else if (uploadErrors.length) {
+      errors.push({
+        userId: upload.userId,
+        label: upload.label,
+        filePath: upload.wavPath,
+        startedAt: upload.startedAt,
+        reason: uploadErrors.join('; '),
+      });
+    }
+  }
+
+  return { segments, errors };
+}
+
+async function uploadIndividually({ url, uploads, headerName, apiKey }) {
+  if (!url) {
+    const errors = uploads.map((upload) => {
+      upload.wavBuffer = null;
+      return {
+        userId: upload.userId,
+        label: upload.label,
+        filePath: upload.wavPath,
+        startedAt: upload.startedAt,
+        reason: 'Transcription URL is not configured',
+      };
+    });
+    return { segments: [], errors };
+  }
+
+  const segments = [];
+  const errors = [];
+
+  for (const upload of uploads) {
+    const originalBuffer = upload.wavBuffer;
+    try {
+      let transcription;
+      try {
+        transcription = await sendSingleUpload({
+          url,
+          upload,
+          headerName,
+          apiKey,
+          fieldName: PRIMARY_FILE_FIELD,
+        });
+      } catch (error) {
+        if (
+          error instanceof UploadError &&
+          error.status === 422 &&
+          error.missingField === PRIMARY_FILE_FIELD
+        ) {
+          transcription = await sendSingleUpload({
+            url,
+            upload: { ...upload, wavBuffer: originalBuffer },
+            headerName,
+            apiKey,
+            fieldName: SECONDARY_FILE_FIELD,
+          });
+        } else {
+          throw error;
+        }
+      }
+
+      segments.push({
+        id: crypto.randomUUID(),
+        userId: upload.userId,
+        label: upload.label,
+        startedAt: upload.startedAt,
+        text: transcription.trim(),
+        audioPath: upload.wavPath,
+      });
+    } catch (error) {
+      const message = error instanceof UploadError
+        ? `Upload failed (${error.attemptedField}): ${error.bodyText || error.message}`
+        : `Upload failed: ${error.message}`;
+      errors.push({
+        userId: upload.userId,
+        label: upload.label,
+        filePath: upload.wavPath,
+        startedAt: upload.startedAt,
+        reason: message,
+      });
+    } finally {
+      upload.wavBuffer = null;
+    }
+  }
+
+  return { segments, errors };
+}
+
+async function sendSingleUpload({ url, upload, headerName, apiKey, fieldName }) {
+  if (!upload?.wavBuffer) {
+    throw new UploadError('Upload buffer was empty', {
+      status: 0,
+      bodyText: null,
+      attemptedField: fieldName,
+    });
+  }
+
+  const formData = new FormData();
+  const file = new File([upload.wavBuffer], upload.wavFileName, { type: 'audio/wav' });
+  formData.append(fieldName, file, upload.wavFileName);
+
+  const headers = {};
+  if (apiKey) {
+    headers[headerName] = apiKey;
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+
+  const bodyText = await response.text();
+  if (!response.ok) {
+    throw new UploadError(`Service responded with ${response.status}`, {
+      status: response.status,
+      bodyText,
+      attemptedField: fieldName,
+    });
+  }
+
+  const transcription = extractTranscription(bodyText);
+  if (typeof transcription !== 'string') {
+    throw new UploadError('Transcription response was not a string', {
+      status: response.status,
+      bodyText,
+      attemptedField: fieldName,
+    });
+  }
+
+  return transcription;
 }
 
 function createWavHeader(dataLength, { sampleRate, channels, bitDepth }) {
@@ -158,6 +464,8 @@ async function writeWavFromPcm(pcmBuffer, wavPath) {
 class TranscriptionClient {
   constructor({ url, apiKey, headerName } = {}) {
     this.url = url?.trim() || null;
+    this.batchUrl = resolveBatchUrl(this.url);
+    this.singleUrl = resolveSingleUrl(this.url);
     this.apiKey = apiKey?.trim() || null;
     this.headerName = headerName?.trim() || 'X-API-Key';
   }
@@ -421,46 +729,32 @@ class TranscriptionClient {
     };
 
     if (pendingUploads.length) {
-      for (const upload of pendingUploads) {
-        const buffer = upload.wavBuffer;
+      let batchHandled = false;
+      if (this.batchUrl) {
         try {
-          let transcription;
-          try {
-            transcription = await sendUpload(upload, PRIMARY_FILE_FIELD);
-          } catch (error) {
-            if (
-              error instanceof UploadError &&
-              error.status === 422 &&
-              error.missingField === PRIMARY_FILE_FIELD
-            ) {
-              transcription = await sendUpload({ ...upload, wavBuffer: buffer }, SECONDARY_FILE_FIELD);
-            } else {
-              throw error;
-            }
-          }
-
-          segments.push({
-            id: crypto.randomUUID(),
-            userId: upload.userId,
-            label: upload.label,
-            startedAt: upload.startedAt,
-            text: transcription.trim(),
-            audioPath: upload.wavPath,
+          const { segments: batchSegments, errors: batchErrors } = await uploadBatch({
+            url: this.batchUrl,
+            uploads: pendingUploads,
+            headerName: this.headerName,
+            apiKey: this.apiKey,
           });
+          segments.push(...batchSegments);
+          errors.push(...batchErrors);
+          batchHandled = batchSegments.length > 0 || batchErrors.length > 0;
         } catch (error) {
-          const message = error instanceof UploadError
-            ? `Upload failed (${error.attemptedField}): ${error.bodyText || error.message}`
-            : `Upload failed: ${error.message}`;
-          errors.push({
-            userId: upload.userId,
-            label: upload.label,
-            filePath: upload.wavPath,
-            startedAt: upload.startedAt,
-            reason: message,
-          });
-        } finally {
-          upload.wavBuffer = null;
+          console.warn('Batch transcription request failed, falling back to individual uploads:', error);
         }
+      }
+
+      if (!batchHandled) {
+        const { segments: singleSegments, errors: singleErrors } = await uploadIndividually({
+          url: this.singleUrl || this.url,
+          uploads: pendingUploads,
+          headerName: this.headerName,
+          apiKey: this.apiKey,
+        });
+        segments.push(...singleSegments);
+        errors.push(...singleErrors);
       }
     }
 
