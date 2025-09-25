@@ -11,32 +11,6 @@ const { mixSessionAudio } = require('./recording/mixdown');
 const { TranscriptionClient } = require('./transcription/transcriptionClient');
 const { SummaryClient } = require('./summary/summaryClient');
 
-function chunkText(text, maxLength) {
-  const chunks = [];
-  let current = '';
-  for (const line of text.split('\n')) {
-    if ((current + line).length + 1 > maxLength) {
-      if (current) {
-        chunks.push(current);
-        current = '';
-      }
-      if (line.length > maxLength) {
-        let start = 0;
-        while (start < line.length) {
-          chunks.push(line.slice(start, start + maxLength));
-          start += maxLength;
-        }
-        continue;
-      }
-    }
-    current += (current ? '\n' : '') + line;
-  }
-  if (current) {
-    chunks.push(current);
-  }
-  return chunks;
-}
-
 class CallTranscribeBot {
   constructor({ token, recordingRoot, transcriptionConfig, summaryConfig, database }) {
     this.token = token;
@@ -225,18 +199,6 @@ class CallTranscribeBot {
 
         await message.reply('Recording stopped. View the transcription here:');
         await message.channel.send(shareUrl);
-
-        if (summaryResult.status === 'summarized') {
-          const summaryChunks = chunkText(summaryResult.summary, 1800);
-          if (summaryChunks.length) {
-            await message.channel.send('Summary of the call:');
-            for (const chunk of summaryChunks) {
-              await message.channel.send(chunk);
-            }
-          }
-        } else if (summaryResult.status === 'failed') {
-          await message.channel.send(`Recording summary failed: ${summaryResult.reason}`);
-        }
       } else {
         await message.reply('Recording stopped. Transcription service responded without content.');
       }
