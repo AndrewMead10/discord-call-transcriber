@@ -1,6 +1,7 @@
 (function () {
   const sessionListEl = document.getElementById('session-list');
   const sessionDetailEl = document.getElementById('session-detail');
+  const themeToggleButton = document.getElementById('theme-toggle');
 
   let sessions = [];
   let activeSessionId = null;
@@ -490,3 +491,61 @@
 
   loadSessions();
 })();
+  const THEME_STORAGE_KEY = 'call-transcribe-theme';
+  let userSetTheme = false;
+
+  function applyTheme(theme, { persist = true } = {}) {
+    const normalized = theme === 'dark' ? 'dark' : 'light';
+    document.body.classList.toggle('dark', normalized === 'dark');
+
+    if (themeToggleButton) {
+      const isDark = normalized === 'dark';
+      themeToggleButton.textContent = isDark ? '☀️' : '🌙';
+      themeToggleButton.setAttribute('aria-label', isDark ? 'Switch to light theme' : 'Switch to dark theme');
+    }
+
+    if (persist) {
+      localStorage.setItem(THEME_STORAGE_KEY, normalized);
+    } else {
+      localStorage.removeItem(THEME_STORAGE_KEY);
+    }
+  }
+
+  function resolveInitialTheme() {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === 'dark' || stored === 'light') {
+      userSetTheme = true;
+      return stored;
+    }
+    userSetTheme = false;
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      return 'dark';
+    }
+    return 'light';
+  }
+
+  const initialTheme = resolveInitialTheme();
+  applyTheme(initialTheme, { persist: userSetTheme });
+
+  if (themeToggleButton) {
+    themeToggleButton.addEventListener('click', () => {
+      const nextTheme = document.body.classList.contains('dark') ? 'light' : 'dark';
+      userSetTheme = true;
+      applyTheme(nextTheme);
+    });
+  }
+
+  if (window.matchMedia) {
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = (event) => {
+      if (!userSetTheme) {
+        applyTheme(event.matches ? 'dark' : 'light', { persist: false });
+      }
+    };
+
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', handleChange);
+    } else if (typeof media.addListener === 'function') {
+      media.addListener(handleChange);
+    }
+  }
