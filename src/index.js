@@ -16,7 +16,7 @@ const webRoot = path.resolve(__dirname, 'server', 'web');
 const database = createDatabase(process.env.DATABASE_PATH);
 
 const summaryConfig = {
-  baseUrl: process.env.LLM_BASE_URL || 'https://llm-server.amqm.dev/',
+  baseUrl: process.env.LLM_BASE_URL || 'https://llm-server.amqm.dev/v1',
   apiKey: process.env.LLM_API_KEY || 'theres-your-api-key',
 };
 

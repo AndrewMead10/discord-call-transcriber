@@ -1,5 +1,29 @@
 const OpenAI = require('openai');
 
+function normalizeBaseUrl(url) {
+  if (!url) {
+    return null;
+  }
+
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    const pathname = parsed.pathname.replace(/\/+$/, '');
+    if (!/\/v1$/i.test(pathname)) {
+      parsed.pathname = `${pathname}/v1`;
+    }
+    return parsed.toString().replace(/\/+$/, '');
+  } catch (_) {
+    // If URL constructor fails (e.g., relative URL), fallback to naive normalization.
+    const withoutTrailing = trimmed.replace(/\/+$/, '');
+    return /\/v1$/i.test(withoutTrailing) ? withoutTrailing : `${withoutTrailing}/v1`;
+  }
+}
+
 function cleanText(value) {
   if (typeof value !== 'string') {
     return value == null ? '' : String(value);
@@ -40,7 +64,7 @@ function extractMessageContent(message) {
 
 class SummaryClient {
   constructor({ baseUrl, apiKey, timeoutMs } = {}) {
-    this.baseUrl = baseUrl?.trim() || null;
+    this.baseUrl = normalizeBaseUrl(baseUrl);
     this.apiKey = apiKey?.trim() || null;
     this.timeoutMs = Number.isFinite(timeoutMs) ? timeoutMs : 60_000;
     this._client = null;
