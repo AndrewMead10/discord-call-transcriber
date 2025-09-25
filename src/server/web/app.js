@@ -455,7 +455,7 @@
       e.preventDefault();
       const password = passwordInput.value;
 
-      if (password !== 'ihatetranscribing') {
+      if (password !== 'ihatetranscriptions') {
         alert('Incorrect password');
         return;
       }
