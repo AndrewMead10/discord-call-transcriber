@@ -7,6 +7,20 @@
   const audioElements = new Map();
   let fullAudioElement = null;
 
+  function renderMarkdown(text) {
+    if (!text) {
+      return '';
+    }
+    if (window.marked && typeof window.marked.parse === 'function') {
+      return window.marked.parse(text, { breaks: true });
+    }
+    const escaped = String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    return escaped.replace(/\n/g, '<br>');
+  }
+
   function formatDate(value) {
     if (!value) {
       return 'Unknown';
@@ -207,7 +221,7 @@
 
       const summaryBody = document.createElement('div');
       summaryBody.className = 'session-summary-body';
-      summaryBody.textContent = session.summary;
+      summaryBody.innerHTML = renderMarkdown(session.summary);
       summarySection.appendChild(summaryBody);
 
       sessionDetailEl.appendChild(summarySection);

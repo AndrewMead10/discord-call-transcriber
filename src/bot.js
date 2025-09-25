@@ -197,7 +197,7 @@ class CallTranscribeBot {
         const baseUrl = (process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 16384}`).replace(/\/$/, '');
         const shareUrl = `${baseUrl}/?session=${encodeURIComponent(sessionId)}`;
 
-        await message.reply('Recording stopped. View the transcription here:');
+        await message.reply('Recording stopped. View the transcription and summary here:');
         await message.channel.send(shareUrl);
       } else {
         await message.reply('Recording stopped. Transcription service responded without content.');
