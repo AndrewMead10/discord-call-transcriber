@@ -9,6 +9,7 @@ const path = require('path');
 const { AudioCaptureManager } = require('./recording/audioCapture');
 const { mixSessionAudio } = require('./recording/mixdown');
 const { TranscriptionClient } = require('./transcription/transcriptionClient');
+const { SummaryClient } = require('./summary/summaryClient');
 
 function chunkText(text, maxLength) {
   const chunks = [];
@@ -37,7 +38,7 @@ function chunkText(text, maxLength) {
 }
 
 class CallTranscribeBot {
-  constructor({ token, recordingRoot, transcriptionConfig, database }) {
+  constructor({ token, recordingRoot, transcriptionConfig, summaryConfig, database }) {
     this.token = token;
     this.recordingRoot = recordingRoot;
     this.client = new Client({
@@ -53,6 +54,7 @@ class CallTranscribeBot {
 
     this.captureManager = new AudioCaptureManager({ baseDir: this.recordingRoot });
     this.transcriptionClient = new TranscriptionClient(transcriptionConfig);
+    this.summaryClient = new SummaryClient(summaryConfig);
     this.connections = new Map();
     this.sessionMetadata = new Map();
     this.database = database ?? null;
@@ -190,6 +192,19 @@ class CallTranscribeBot {
 
     const transcriptionResult = await this.transcriptionClient.submit(manifest);
 
+    let summaryResult = { status: 'skipped', reason: 'Transcription not completed' };
+    if (transcriptionResult.status === 'sent') {
+      summaryResult = await this._summarizeTranscription({
+        transcriptionResult,
+        metadata,
+        manifest,
+      });
+
+      if (summaryResult.status === 'summarized' && transcriptionResult.data) {
+        transcriptionResult.data.summary = summaryResult.summary;
+      }
+    }
+
     await this._persistSession({
       message,
       manifest,
@@ -210,6 +225,18 @@ class CallTranscribeBot {
 
         await message.reply('Recording stopped. View the transcription here:');
         await message.channel.send(shareUrl);
+
+        if (summaryResult.status === 'summarized') {
+          const summaryChunks = chunkText(summaryResult.summary, 1800);
+          if (summaryChunks.length) {
+            await message.channel.send('Summary of the call:');
+            for (const chunk of summaryChunks) {
+              await message.channel.send(chunk);
+            }
+          }
+        } else if (summaryResult.status === 'failed') {
+          await message.channel.send(`Recording summary failed: ${summaryResult.reason}`);
+        }
       } else {
         await message.reply('Recording stopped. Transcription service responded without content.');
       }
@@ -218,6 +245,71 @@ class CallTranscribeBot {
     } else if (transcriptionResult.status === 'failed') {
       await message.reply(`Recording stopped, but I could not reach the transcription service: ${transcriptionResult.reason}`);
     }
+  }
+
+  async _summarizeTranscription({ transcriptionResult, metadata, manifest }) {
+    if (!this.summaryClient || !this.summaryClient.isConfigured()) {
+      return { status: 'skipped', reason: 'Summarization service is not configured' };
+    }
+
+    const transcript = transcriptionResult?.data?.transcript;
+    if (!transcript || !transcript.trim()) {
+      return { status: 'skipped', reason: 'Transcript was empty' };
+    }
+
+    const segments = Array.isArray(transcriptionResult?.data?.segments)
+      ? transcriptionResult.data.segments
+      : [];
+
+    const participantsByKey = new Map();
+    const registerParticipant = (userId, displayName) => {
+      if (!userId && !displayName) {
+        return;
+      }
+      const key = userId || displayName;
+      const existing = participantsByKey.get(key);
+      if (existing) {
+        if (!existing.displayName && displayName) {
+          existing.displayName = displayName;
+        }
+        if (!existing.userId && userId) {
+          existing.userId = userId;
+        }
+        return;
+      }
+      participantsByKey.set(key, {
+        userId: userId || null,
+        displayName: displayName || userId || 'Unknown participant',
+      });
+    };
+
+    if (Array.isArray(metadata?.participants)) {
+      for (const participant of metadata.participants) {
+        registerParticipant(participant?.userId ?? null, participant?.displayName ?? null);
+      }
+    }
+
+    const labels = manifest?.labels ?? {};
+    for (const [userId, label] of Object.entries(labels)) {
+      registerParticipant(userId, label);
+    }
+
+    for (const segment of segments) {
+      registerParticipant(segment?.userId ?? null, segment?.label ?? null);
+    }
+
+    const sessionMetadata = {
+      guildName: metadata?.guildName ?? null,
+      channelName: metadata?.channelName ?? null,
+      startedAt: metadata?.startedAt ?? manifest?.startedAt ?? null,
+      participants: Array.from(participantsByKey.values()),
+    };
+
+    return this.summaryClient.summarize({
+      transcript,
+      segments,
+      sessionMetadata,
+    });
   }
 
   async _collectParticipants({ message, metadata, channelId, manifest }) {
@@ -306,6 +398,7 @@ class CallTranscribeBot {
       const sessionStartedAt = metadata?.startedAt
         ?? (Number.isFinite(manifestTimestamp) ? manifestTimestamp : now);
       const transcript = transcriptionResult.data?.transcript ?? null;
+      const summary = transcriptionResult.data?.summary ?? null;
       const segmentsFromResult = transcriptionResult.data?.segments ?? [];
 
       const participants = data.participants.map((participant) => ({
@@ -338,6 +431,7 @@ class CallTranscribeBot {
         startedAt: sessionStartedAt,
         endedAt: now,
         transcript,
+        summary,
         audioPath: mixdownRelativePath,
       };
 

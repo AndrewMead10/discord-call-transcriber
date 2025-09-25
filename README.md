@@ -1,6 +1,6 @@
 # Call Transcribe Bot
 
-Discord bot that joins the voice channel of the user who mentions it, records each participant's audio into individual PCM files, and forwards a manifest to a transcription service for further processing.
+Discord bot that joins the voice channel of the user who mentions it, records each participant's audio into individual PCM files, forwards a manifest to a transcription service for further processing, and summarizes the resulting transcript with an LLM.
 
 ## Requirements
 
@@ -35,6 +35,8 @@ cp .env.example .env
 | `TRANSCRIPTION_URL` | HTTPS endpoint that will receive the recording manifest. Leave blank to skip the forwarding step. |
 | `TRANSCRIPTION_API_KEY` | API key sent to the transcription endpoint. |
 | `TRANSCRIPTION_HEADER_NAME` | (Optional) Header name used for the API key. Defaults to `X-API-Key`. |
+| `LLM_BASE_URL` | (Optional) Base URL for the OpenAI-compatible summarization endpoint. Defaults to `https://llm-server.amqm.dev/`. |
+| `LLM_API_KEY` | (Optional) API key sent when talking to the summarization endpoint. Defaults to `theres-your-api-key`. |
 
 ## Running the bot
 
@@ -44,7 +46,7 @@ npm start
 
 Once running, invite the bot to your server and mention it from a text channel while you are connected to a voice channel. The bot will hop into your voice channel, begin recording, and acknowledge that it is capturing audio. Mention the bot again with the word `leave`, `stop`, or `done` to end the session. Audio is saved under `tmp/<guildId>/<sessionId>/<userId>/*.pcm`.
 
-If a transcription endpoint is configured, the bot will convert each recorded PCM segment to mono 16 kHz WAV and POST it (as `file` in `multipart/form-data`) to the provided `TRANSCRIPTION_URL`, then assemble the returned text into a channel transcript. The API key is sent in the `X-API-Key` header by default; override `TRANSCRIPTION_HEADER_NAME` if your service expects a different header (e.g., `Authorization`).
+If a transcription endpoint is configured, the bot will convert each recorded PCM segment to mono 16 kHz WAV and POST it (as `file` in `multipart/form-data`) to the provided `TRANSCRIPTION_URL`, then assemble the returned text into a channel transcript. The API key is sent in the `X-API-Key` header by default; override `TRANSCRIPTION_HEADER_NAME` if your service expects a different header (e.g., `Authorization`). When a transcript is produced, the bot will forward it to an OpenAI-compatible LLM at `LLM_BASE_URL` to generate a concise summary and post the result back into the Discord channel.
 
 ## Running with Docker
 

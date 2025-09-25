@@ -15,6 +15,11 @@ const recordingRoot = path.resolve(__dirname, '..', 'tmp');
 const webRoot = path.resolve(__dirname, 'server', 'web');
 const database = createDatabase(process.env.DATABASE_PATH);
 
+const summaryConfig = {
+  baseUrl: process.env.LLM_BASE_URL || 'https://llm-server.amqm.dev/',
+  apiKey: process.env.LLM_API_KEY || 'theres-your-api-key',
+};
+
 const port = Number(process.env.PORT || 16384);
 
 const http = startHttpServer({
@@ -32,6 +37,7 @@ const bot = new CallTranscribeBot({
     apiKey: process.env.TRANSCRIPTION_API_KEY,
     headerName: process.env.TRANSCRIPTION_HEADER_NAME,
   },
+  summaryConfig,
   database,
 });
 

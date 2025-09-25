@@ -197,6 +197,22 @@
 
     sessionDetailEl.appendChild(header);
 
+    if (session.summary && session.summary.trim()) {
+      const summarySection = document.createElement('section');
+      summarySection.className = 'session-summary';
+
+      const summaryTitle = document.createElement('h3');
+      summaryTitle.textContent = 'Summary';
+      summarySection.appendChild(summaryTitle);
+
+      const summaryBody = document.createElement('div');
+      summaryBody.className = 'session-summary-body';
+      summaryBody.textContent = session.summary;
+      summarySection.appendChild(summaryBody);
+
+      sessionDetailEl.appendChild(summarySection);
+    }
+
     if (session.audioUrl) {
       const playback = document.createElement('section');
       playback.className = 'session-playback';
