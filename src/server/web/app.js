@@ -455,18 +455,22 @@
       e.preventDefault();
       const password = passwordInput.value;
 
-      if (password !== 'ihatetranscriptions') {
-        alert('Incorrect password');
-        return;
-      }
-
       try {
         const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
           method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${password}`,
+          },
         });
 
         if (!response.ok) {
-          throw new Error(`Failed to delete session: ${response.status}`);
+          if (response.status === 401) {
+            throw new Error('Authorization required');
+          } else if (response.status === 403) {
+            throw new Error('Invalid password');
+          } else {
+            throw new Error(`Failed to delete session: ${response.status}`);
+          }
         }
 
         closeModal();

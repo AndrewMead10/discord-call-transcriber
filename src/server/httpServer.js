@@ -18,6 +18,23 @@ function normalizeRelativePath(relativePath) {
 function buildRouter({ database, recordingRoot }) {
   const router = express.Router();
 
+  // Middleware to validate delete password
+  const validateDeletePassword = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    const expectedPassword = process.env.DELETE_PASSWORD || 'default-delete-password-123';
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Authorization required' });
+    }
+
+    const token = authHeader.substring(7);
+    if (token !== expectedPassword) {
+      return res.status(403).json({ error: 'Invalid password' });
+    }
+
+    next();
+  };
+
   router.get('/sessions', (req, res) => {
     try {
       const sessions = database.getSessions().map((session) => ({
@@ -73,7 +90,7 @@ function buildRouter({ database, recordingRoot }) {
     }
   });
 
-  router.delete('/sessions/:sessionId', (req, res) => {
+  router.delete('/sessions/:sessionId', validateDeletePassword, (req, res) => {
     try {
       const sessionId = req.params.sessionId;
       const deleted = database.deleteSession(sessionId);
