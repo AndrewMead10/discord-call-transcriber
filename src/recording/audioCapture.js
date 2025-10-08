@@ -62,7 +62,10 @@ class AudioCaptureSession {
 
         pipeline(opusStream, pcmStream, fileStream, (error) => {
           if (error) {
-            console.error(`Audio pipeline error for ${userId}:`, error);
+            // ERR_STREAM_PREMATURE_CLOSE is expected during shutdown/cleanup
+            if (error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+              console.error(`Audio pipeline error for ${userId}:`, error);
+            }
           }
           this.activeCaptures.delete(userId);
         });

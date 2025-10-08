@@ -122,9 +122,52 @@ class CallTranscribeBot {
       });
 
       const teardown = async (label) => {
+        // Check if this connection is still registered - if not, it means
+        // _handleStopRequest is handling the cleanup and we should skip
+        if (!this.connections.has(message.guild.id)) {
+          return;
+        }
+
         console.log(`Voice connection ${label} in guild ${message.guild.id}`);
-        await this.captureManager.stop(message.guild.id);
         this.connections.delete(message.guild.id);
+
+        const manifest = await this.captureManager.stop(message.guild.id);
+        if (!manifest) {
+          return;
+        }
+
+        // Connection was lost unexpectedly, still attempt to transcribe
+        try {
+          const metadata = this.sessionMetadata.get(message.guild.id);
+          const mixdownPath = await mixSessionAudio({ manifest });
+          const transcriptionResult = await this.transcriptionClient.submit(manifest);
+
+          if (transcriptionResult.status === 'sent') {
+            const summaryResult = await this._summarizeTranscription({
+              transcriptionResult,
+              metadata,
+              manifest,
+            });
+
+            if (summaryResult.status === 'summarized' && transcriptionResult.data) {
+              transcriptionResult.data.summary = summaryResult.summary;
+            }
+          }
+
+          await this._persistSession({
+            message,
+            manifest,
+            transcriptionResult,
+            metadata,
+            channelId: connection.joinConfig?.channelId ?? null,
+            mixdownPath,
+          });
+
+          this.sessionMetadata.delete(message.guild.id);
+        } catch (error) {
+          console.error('Failed to process recording after unexpected disconnect:', error);
+          this.sessionMetadata.delete(message.guild.id);
+        }
       };
 
       connection.on(VoiceConnectionStatus.Disconnected, () => {
@@ -153,12 +196,17 @@ class CallTranscribeBot {
     const channelId = connection.joinConfig?.channelId ?? null;
     const metadata = this.sessionMetadata.get(message.guild.id);
 
-    connection.destroy();
+    // Remove from connections first to prevent race with event handlers
     this.connections.delete(message.guild.id);
 
+    // Then destroy the connection
+    connection.destroy();
+
+    // Now stop the capture and get the manifest
     const manifest = await this.captureManager.stop(message.guild.id);
     if (!manifest) {
       await message.reply('Stopped listening, but there was nothing recorded.');
+      this.sessionMetadata.delete(message.guild.id);
       return;
     }
 
