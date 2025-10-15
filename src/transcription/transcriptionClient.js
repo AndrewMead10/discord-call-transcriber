@@ -409,13 +409,6 @@ function pcmStereo48kToMono16k(buffer) {
 
   const view = new Int16Array(buffer.buffer, buffer.byteOffset, totalSamples);
   const frameCount = totalSamples / SOURCE_CHANNELS;
-  const monoSamples = new Float64Array(frameCount);
-
-  for (let frame = 0; frame < frameCount; frame += 1) {
-    const left = view[frame * SOURCE_CHANNELS];
-    const right = view[frame * SOURCE_CHANNELS + 1];
-    monoSamples[frame] = (left + right) / 2;
-  }
 
   const downsampleFactor = SOURCE_SAMPLE_RATE / TARGET_SAMPLE_RATE;
   if (Math.abs(downsampleFactor - Math.round(downsampleFactor)) > 1e-6) {
@@ -427,14 +420,20 @@ function pcmStereo48kToMono16k(buffer) {
   const downsampled = new Int16Array(downsampledLength);
 
   for (let i = 0; i < downsampledLength; i += 1) {
+    // Stream the averaging to avoid materialising large mono sample buffers for long recordings.
     const start = i * factor;
+    const end = Math.min(start + factor, frameCount);
+
     let sum = 0;
-    let count = 0;
-    for (let j = 0; j < factor && start + j < frameCount; j += 1) {
-      sum += monoSamples[start + j];
-      count += 1;
+    let samples = 0;
+    for (let frame = start; frame < end; frame += 1) {
+      const left = view[frame * SOURCE_CHANNELS];
+      const right = view[frame * SOURCE_CHANNELS + 1];
+      sum += left + right;
+      samples += SOURCE_CHANNELS;
     }
-    const avg = sum / count;
+
+    const avg = samples > 0 ? sum / samples : 0;
     const clamped = Math.max(-32768, Math.min(32767, Math.round(avg)));
     downsampled[i] = clamped;
   }
